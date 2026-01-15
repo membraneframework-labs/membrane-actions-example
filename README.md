@@ -18,8 +18,6 @@ def deps do
   ]
 end
 ```
-```
-```
 
 This package depends on hardware encoding acceleration capabilities provided by [Vulkan video exensions](https://www.khronos.org/blog/an-introduction-to-vulkan-video) and works only on Linux with NVIDIA or AMD GPUs with Mesa drivers. For more information see the README of the [`vk-video`](https://crates.io/crates/vk-video) Rust package.
 
