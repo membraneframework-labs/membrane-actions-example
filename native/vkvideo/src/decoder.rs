@@ -1,6 +1,5 @@
-use crate::ok;
 use crate::Resource;
-use rustler::{Atom, Binary, Env, Error, NifStruct, OwnedBinary, ResourceArc};
+use rustler::{Binary, Env, Error, NifStruct, OwnedBinary, ResourceArc};
 use std::sync::Mutex;
 use vk_video::{parameters::DecoderParameters, BytesDecoder, EncodedInputChunk};
 
@@ -17,20 +16,17 @@ pub struct RawFrame<'a> {
     pub height: u32,
 }
 
-pub fn new(
-    _env: Env,
-    resource: ResourceArc<Resource>,
-) -> Result<(Atom, ResourceArc<Resource>), Error> {
+pub fn new(_env: Env, resource: ResourceArc<Resource>) -> Result<ResourceArc<Resource>, Error> {
     let decoder = resource
         .device()
-        .ok_or_else(|| Error::BadArg)?
+        .ok_or_else(|| Error::RaiseTerm(Box::new("Resource is not a device")))?
         .device
         .create_bytes_decoder(DecoderParameters::default())
         .map_err(|err| Error::RaiseTerm(Box::new(err.to_string())))?;
     let decoder_mutex = Mutex::new(decoder);
     let decoder = DecoderResource { decoder_mutex };
     let resource = ResourceArc::new(Resource::Decoder(decoder));
-    Ok((ok(), resource))
+    Ok(resource)
 }
 
 pub fn decode<'a>(
@@ -38,10 +34,10 @@ pub fn decode<'a>(
     resource: ResourceArc<Resource>,
     bytes: Binary,
     pts_ns: Option<u64>,
-) -> Result<(Atom, Vec<RawFrame<'a>>), Error> {
+) -> Result<Vec<RawFrame<'a>>, Error> {
     let mut decoder = resource
         .decoder()
-        .ok_or_else(|| Error::BadArg)?
+        .ok_or_else(|| Error::RaiseTerm(Box::new("Resource is not a decoder")))?
         .decoder_mutex
         .lock()
         .map_err(|err| Error::RaiseTerm(Box::new(err.to_string())))?;
@@ -62,18 +58,18 @@ pub fn decode<'a>(
 
         results.push(RawFrame {
             payload: payload.release(env),
-            pts_ns: frame.pts,
+            pts_ns: frame.metadata.pts,
             width: frame.data.width,
             height: frame.data.height,
         });
     }
-    Ok((ok(), results))
+    Ok(results)
 }
 
-pub fn flush(env: Env, resource: ResourceArc<Resource>) -> Result<(Atom, Vec<RawFrame>), Error> {
+pub fn flush(env: Env, resource: ResourceArc<Resource>) -> Result<Vec<RawFrame>, Error> {
     let mut decoder = resource
         .decoder()
-        .ok_or_else(|| Error::BadArg)?
+        .ok_or_else(|| Error::RaiseTerm(Box::new("Resource is not a decoder")))?
         .decoder_mutex
         .lock()
         .map_err(|err| Error::RaiseTerm(Box::new(err.to_string())))?;
@@ -91,10 +87,10 @@ pub fn flush(env: Env, resource: ResourceArc<Resource>) -> Result<(Atom, Vec<Raw
 
         results.push(RawFrame {
             payload: payload.release(env),
-            pts_ns: frame.pts,
+            pts_ns: frame.metadata.pts,
             width: frame.data.width,
             height: frame.data.height,
         });
     }
-    Ok((ok(), results))
+    Ok(results)
 }

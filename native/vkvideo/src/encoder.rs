@@ -1,10 +1,9 @@
-use crate::ok;
-use crate::Resource;
-use rustler::{Atom, Error, NifTaggedEnum, ResourceArc};
+use crate::{EncodedFrame, Resource};
 use rustler::{Binary, Env, NifStruct, NifUnitEnum, OwnedBinary};
+use rustler::{Error, NifTaggedEnum, ResourceArc};
 use std::sync::Mutex;
 use vk_video::parameters::{RateControl, Rational, VideoParameters};
-use vk_video::{BytesEncoder, Frame, RawFrameData};
+use vk_video::{BytesEncoder, InputFrame, RawFrameData};
 
 pub struct EncoderResource {
     pub encoder_mutex: Mutex<Option<BytesEncoder>>,
@@ -12,20 +11,13 @@ pub struct EncoderResource {
     pub height: u32,
 }
 
-#[derive(NifStruct)]
-#[module = "Membrane.VKVideo.EncodedFrame"]
-pub struct EncodedFrame<'a> {
-    pub payload: Binary<'a>,
-    pub pts_ns: Option<u64>,
-}
-
-#[derive(NifUnitEnum)]
+#[derive(NifUnitEnum, Clone, Copy)]
 pub enum EncoderTune {
     LowLatency,
     HighQuality,
 }
 
-#[derive(NifStruct)]
+#[derive(NifStruct, Clone, Copy)]
 #[module = "Membrane.VKVideo.Encoder.VariableBitrate"]
 pub struct VariableBitrate {
     pub average_bitrate: u64,
@@ -33,14 +25,14 @@ pub struct VariableBitrate {
     pub virtual_buffer_size_ms: u64,
 }
 
-#[derive(NifStruct)]
+#[derive(NifStruct, Clone, Copy)]
 #[module = "Membrane.VKVideo.Encoder.ConstantBitrate"]
 pub struct ConstantBitrate {
     pub bitrate: u64,
     pub virtual_buffer_size_ms: u64,
 }
 
-#[derive(NifTaggedEnum)]
+#[derive(NifTaggedEnum, Clone, Copy)]
 pub enum EncoderRateControl {
     EncoderDefault,
     VariableBitrate(VariableBitrate),
@@ -48,9 +40,9 @@ pub enum EncoderRateControl {
     Disabled,
 }
 
-impl Into<RateControl> for EncoderRateControl {
-    fn into(self) -> RateControl {
-        match self {
+impl From<EncoderRateControl> for RateControl {
+    fn from(rc: EncoderRateControl) -> Self {
+        match rc {
             EncoderRateControl::EncoderDefault => RateControl::EncoderDefault,
             EncoderRateControl::ConstantBitrate(config) => RateControl::ConstantBitrate {
                 bitrate: config.bitrate,
@@ -76,20 +68,29 @@ pub fn new(
     resource: ResourceArc<Resource>,
     width: u32,
     height: u32,
-    frame_rate: (u32, u32),
+    approx_framerate: (u32, u32),
     tune: EncoderTune,
     rate_control: EncoderRateControl,
-) -> Result<(Atom, ResourceArc<Resource>), Error> {
-    let device_resource = &resource.device().ok_or_else(|| Error::BadArg)?.device;
-    let non_zero_width = std::num::NonZero::new(width).ok_or(Error::BadArg)?;
-    let non_zero_height = std::num::NonZero::new(height).ok_or(Error::BadArg)?;
+) -> Result<ResourceArc<Resource>, Error> {
+    let device_resource = &resource
+        .device()
+        .ok_or_else(|| Error::RaiseTerm(Box::new("Resource is not a device")))?
+        .device;
+    let non_zero_width = std::num::NonZero::new(width).ok_or(Error::RaiseTerm(Box::new(
+        "Improper width: width must be non-zero",
+    )))?;
+    let non_zero_height = std::num::NonZero::new(height).ok_or(Error::RaiseTerm(Box::new(
+        "Improper height: height must be non-zero",
+    )))?;
 
     let video_parameters = VideoParameters {
         width: non_zero_width,
         height: non_zero_height,
         target_framerate: Rational {
-            numerator: frame_rate.0,
-            denominator: std::num::NonZero::new(frame_rate.1).ok_or(Error::BadArg)?,
+            numerator: approx_framerate.0,
+            denominator: std::num::NonZero::new(approx_framerate.1).ok_or(Error::RaiseTerm(Box::new(
+                "Improper approx_framerate denominator: approx_framerate denominator must be non-zero",
+            )))?,
         },
     };
 
@@ -113,7 +114,7 @@ pub fn new(
     };
 
     let resource = ResourceArc::new(Resource::Encoder(encoder));
-    Ok((ok(), resource))
+    Ok(resource)
 }
 
 pub fn encode<'a>(
@@ -121,9 +122,11 @@ pub fn encode<'a>(
     resource: ResourceArc<Resource>,
     bytes: Binary,
     pts_ns: Option<u64>,
-) -> Result<(Atom, EncodedFrame<'a>), Error> {
-    let encoder = resource.encoder().ok_or_else(|| Error::BadArg)?;
-    let frame = Frame {
+) -> Result<EncodedFrame<'a>, Error> {
+    let encoder = resource
+        .encoder()
+        .ok_or_else(|| Error::RaiseTerm(Box::new("Resource is not an encoder")))?;
+    let frame = InputFrame {
         data: RawFrameData {
             frame: bytes.to_vec(),
             width: encoder.width,
@@ -137,7 +140,9 @@ pub fn encode<'a>(
         .lock()
         .map_err(|err| Error::RaiseTerm(Box::new(err.to_string())))?;
 
-    let encoder = guard.as_mut().ok_or(Error::BadArg)?;
+    let encoder: &mut BytesEncoder = guard
+        .as_mut()
+        .ok_or(Error::RaiseTerm(Box::new("Encoder is not initialized")))?;
 
     let encoded_frame = encoder
         .encode(&frame, false)
@@ -148,11 +153,8 @@ pub fn encode<'a>(
         OwnedBinary::new(len).ok_or(Error::RaiseTerm(Box::new("Couldn't create OwnedBinary")))?;
     payload.as_mut_slice().copy_from_slice(&encoded_frame.data);
 
-    Ok((
-        ok(),
-        EncodedFrame {
-            payload: payload.release(env),
-            pts_ns: encoded_frame.pts,
-        },
-    ))
+    Ok(EncodedFrame {
+        payload: payload.release(env),
+        pts_ns: encoded_frame.pts,
+    })
 }

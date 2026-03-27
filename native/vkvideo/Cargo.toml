@@ -9,5 +9,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 rustler = "0.37.0"
-vk-video = { git = "https://github.com/software-mansion/smelter.git", features=["expose_parsers"] }
-wgpu = "25.0.2"
+vk-video = { git = "https://github.com/software-mansion/smelter.git", features=["expose_parsers", "transcoder"], default-features=false}

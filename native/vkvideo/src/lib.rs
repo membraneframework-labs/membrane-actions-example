@@ -1,8 +1,12 @@
 use decoder::{DecoderResource, RawFrame};
-use encoder::{EncodedFrame, EncoderRateControl, EncoderResource, EncoderTune};
+use encoder::{EncoderRateControl, EncoderResource, EncoderTune};
 use rustler::{Atom, Binary, Env, Error, ResourceArc, Term};
 use std::sync::Arc;
-use vk_video::VulkanDevice;
+use transcoder::{OutputSpec, TranscoderResource};
+use vk_video::{
+    parameters::{VulkanAdapterDescriptor, VulkanDeviceDescriptor},
+    VulkanDevice,
+};
 
 rustler::atoms! {
   ok,
@@ -10,10 +14,12 @@ rustler::atoms! {
 
 pub mod decoder;
 pub mod encoder;
+pub mod transcoder;
 
 pub enum Resource {
     Encoder(EncoderResource),
     Decoder(DecoderResource),
+    Transcoder(TranscoderResource),
     Device(DeviceResource),
 }
 
@@ -38,6 +44,13 @@ impl Resource {
         }
     }
 
+    pub fn transcoder(&self) -> Option<&TranscoderResource> {
+        match self {
+            Self::Transcoder(transcoder_resource) => Some(transcoder_resource),
+            _ => None,
+        }
+    }
+
     pub fn device(&self) -> Option<&DeviceResource> {
         match self {
             Self::Device(device_resource) => Some(device_resource),
@@ -46,31 +59,42 @@ impl Resource {
     }
 }
 
+#[derive(rustler::NifStruct)]
+#[module = "Membrane.VKVideo.EncodedFrame"]
+pub struct EncodedFrame<'a> {
+    pub payload: Binary<'a>,
+    pub pts_ns: Option<u64>,
+}
+
 #[allow(non_local_definitions)]
 fn load(env: Env, _: Term) -> bool {
     rustler::resource!(Resource, env)
 }
 
 #[rustler::nif(schedule = "DirtyIo")]
-fn create_device() -> Result<(Atom, ResourceArc<Resource>), Error> {
+fn create_device() -> Result<ResourceArc<Resource>, Error> {
     let instance = vk_video::VulkanInstance::new()
         .map_err(|err| Error::RaiseTerm(Box::new(err.to_string())))?;
+
+    let adapter_descriptor = VulkanAdapterDescriptor {
+        supports_decoding: true,
+        supports_encoding: true,
+    };
     let adapter = instance
-        .create_adapter(None)
+        .create_adapter(&adapter_descriptor)
         .map_err(|err| Error::RaiseTerm(Box::new(err.to_string())))?;
+
+    let device_descriptor = VulkanDeviceDescriptor {};
     let device = adapter
-        .create_device(wgpu::Features::empty(), wgpu::Limits::default())
+        .create_device(&device_descriptor)
         .map_err(|err| Error::RaiseTerm(Box::new(err.to_string())))?;
 
     let device_resource = ResourceArc::new(Resource::Device(DeviceResource { device }));
-    Ok((ok(), device_resource))
+    Ok(device_resource)
 }
 
 #[rustler::nif(schedule = "DirtyIo")]
-fn new_decoder(
-    env: Env,
-    resource: ResourceArc<Resource>,
-) -> Result<(Atom, ResourceArc<Resource>), Error> {
+fn new_decoder(env: Env, resource: ResourceArc<Resource>) -> Result<ResourceArc<Resource>, Error> {
     decoder::new(env, resource)
 }
 
@@ -80,15 +104,12 @@ pub fn decode<'a>(
     resource: ResourceArc<Resource>,
     bytes: Binary,
     pts_ns: Option<u64>,
-) -> Result<(Atom, Vec<RawFrame<'a>>), Error> {
+) -> Result<Vec<RawFrame<'a>>, Error> {
     decoder::decode(env, resource, bytes, pts_ns)
 }
 
 #[rustler::nif(schedule = "DirtyIo")]
-pub fn flush_decoder(
-    env: Env,
-    resource: ResourceArc<Resource>,
-) -> Result<(Atom, Vec<RawFrame>), Error> {
+pub fn flush_decoder(env: Env, resource: ResourceArc<Resource>) -> Result<Vec<RawFrame>, Error> {
     decoder::flush(env, resource)
 }
 
@@ -101,7 +122,7 @@ fn new_encoder(
     frame_rate: (u32, u32),
     tune: EncoderTune,
     rate_control: EncoderRateControl,
-) -> Result<(Atom, ResourceArc<Resource>), Error> {
+) -> Result<ResourceArc<Resource>, Error> {
     encoder::new(env, resource, width, height, frame_rate, tune, rate_control)
 }
 
@@ -111,11 +132,12 @@ fn encode<'a>(
     resource: ResourceArc<Resource>,
     bytes: Binary,
     pts_ns: Option<u64>,
-) -> Result<(Atom, EncodedFrame<'a>), Error> {
+) -> Result<EncodedFrame<'a>, Error> {
     encoder::encode(env, resource, bytes, pts_ns)
 }
 
 #[rustler::nif(schedule = "DirtyIo")]
+#[allow(unused_variables)]
 fn destroy<'a>(env: Env<'a>, resource: ResourceArc<Resource>) -> Result<Atom, Error> {
     if let Resource::Encoder(encoder) = &*resource {
         let mut encoder = encoder
@@ -126,6 +148,34 @@ fn destroy<'a>(env: Env<'a>, resource: ResourceArc<Resource>) -> Result<Atom, Er
     }
 
     Ok(ok())
+}
+
+#[rustler::nif(schedule = "DirtyIo")]
+fn new_transcoder(
+    env: Env,
+    resource: ResourceArc<Resource>,
+    output_specs: Vec<OutputSpec>,
+    approx_framerate: (u32, u32),
+) -> Result<ResourceArc<Resource>, Error> {
+    transcoder::new(env, resource, output_specs, approx_framerate)
+}
+
+#[rustler::nif(schedule = "DirtyIo")]
+fn transcode<'a>(
+    env: Env<'a>,
+    resource: ResourceArc<Resource>,
+    bytes: Binary,
+    pts_ns: Option<u64>,
+) -> Result<Vec<Vec<EncodedFrame<'a>>>, Error> {
+    transcoder::transcode(env, resource, bytes, pts_ns)
+}
+
+#[rustler::nif(schedule = "DirtyIo")]
+pub fn flush_transcoder<'a>(
+    env: Env<'a>,
+    resource: ResourceArc<Resource>,
+) -> Result<Vec<Vec<EncodedFrame<'a>>>, Error> {
+    transcoder::flush(env, resource)
 }
 
 rustler::init!("Elixir.Membrane.VKVideo.Native", load = load);

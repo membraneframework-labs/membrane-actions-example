@@ -2,6 +2,8 @@ defmodule Encoder.NativeTest do
   use ExUnit.Case, async: false
   alias Membrane.VKVideo.{DeviceServer, Native}
 
+  @take_refs_snapshot System.get_env("TAKE_TEST_REFERENCES_SNAPSHOT", "") != ""
+
   @width 1280
   @height 720
   # number of bytes per sample is 1.5 since we use 420 chroma subsampling
@@ -39,9 +41,9 @@ defmodule Encoder.NativeTest do
 
       assert {:ok, file} = File.read(in_path)
 
-      {:ok, device} = DeviceServer.get_device()
+      device = DeviceServer.get_device()
 
-      {:ok, encoder_ref} =
+      encoder_ref =
         Native.new_encoder(
           device,
           @width,
@@ -55,12 +57,13 @@ defmodule Encoder.NativeTest do
 
       encoded_frames =
         Enum.map(raw_frames, fn raw_frame ->
-          {:ok, encoded_frame} =
+          encoded_frame =
             Native.encode(encoder_ref, raw_frame)
 
           encoded_frame.payload
         end)
 
+      if @take_refs_snapshot, do: File.write!(ref_path, Enum.join(encoded_frames))
       assert File.read!(ref_path) == Enum.join(encoded_frames)
 
       Native.destroy(encoder_ref)

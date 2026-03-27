@@ -51,7 +51,7 @@ defmodule Membrane.VKVideo.Encoder do
       width: nil,
       height: nil,
       override_framerate?: opts.approx_framerate != nil,
-      framerate: opts.approx_framerate,
+      approx_framerate: opts.approx_framerate,
       rate_control: opts.rate_control,
       tune: opts.tune
     }
@@ -74,12 +74,12 @@ defmodule Membrane.VKVideo.Encoder do
 
       not state.override_framerate? and
           (stream_format.width != state.width or stream_format.height != state.height or
-             stream_format.framerate != state.framerate) ->
+             stream_format.framerate != state.approx_framerate) ->
         %{
           state
           | width: stream_format.width,
             height: stream_format.height,
-            framerate: resolve_framerate(stream_format, state)
+            approx_framerate: resolve_framerate(stream_format, state)
         }
         |> spawn_encoder()
 
@@ -89,14 +89,14 @@ defmodule Membrane.VKVideo.Encoder do
   end
 
   defp spawn_encoder(state) do
-    {:ok, device} = DeviceServer.get_device()
+    device = DeviceServer.get_device()
 
-    {:ok, encoder} =
+    encoder =
       Native.new_encoder(
         device,
         state.width,
         state.height,
-        state.framerate,
+        state.approx_framerate,
         state.tune,
         state.rate_control
       )
@@ -115,7 +115,7 @@ defmodule Membrane.VKVideo.Encoder do
       if state.override_framerate? do
         stream_format
       else
-        %{stream_format | framerate: state.framerate}
+        %{stream_format | framerate: state.approx_framerate}
       end
 
     {[stream_format: {:output, stream_format}], state}
@@ -139,7 +139,7 @@ defmodule Membrane.VKVideo.Encoder do
 
   @impl true
   def handle_buffer(:input, buffer, _ctx, state) do
-    {:ok, encoded_frame} = Native.encode(state.encoder, buffer.payload, buffer.pts)
+    encoded_frame = Native.encode(state.encoder, buffer.payload, buffer.pts)
 
     pts =
       if encoded_frame.pts_ns != nil,
