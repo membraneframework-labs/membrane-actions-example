@@ -8,7 +8,7 @@ defmodule Membrane.VKVideo.Mixfile do
     [
       app: :membrane_vk_video_plugin,
       version: @version,
-      elixir: "~> 1.13",
+      elixir: "~> 1.14",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
