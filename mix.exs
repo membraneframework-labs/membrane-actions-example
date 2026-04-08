@@ -1,14 +1,14 @@
 defmodule Membrane.VKVideo.Mixfile do
   use Mix.Project
 
-  @version "0.2.0"
+  @version "0.2.1"
   @github_url "https://github.com/membraneframework/membrane_vk_video_plugin"
 
   def project do
     [
       app: :membrane_vk_video_plugin,
       version: @version,
-      elixir: "~> 1.14.1",
+      elixir: "~> 1.13",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
