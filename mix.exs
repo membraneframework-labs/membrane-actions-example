@@ -1,7 +1,7 @@
 defmodule Membrane.VKVideo.Mixfile do
   use Mix.Project
 
-  @version "0.2.5"
+  @version "0.2.6"
   @github_url "https://github.com/membraneframework/membrane_vk_video_plugin"
 
   def project do
